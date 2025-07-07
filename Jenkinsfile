@@ -106,42 +106,20 @@ pipeline {
 
     environment {
         IMAGE_NAME = "jenkins-flask-app"
-        IMAGE_TAG = "demo1"
-        DOCKER_HUB_REPO = "prajwalrawate1/jenkins-flask-app"
-        EC2_HOST = "ec2-user@13.60.31.154" // or ubuntu@ if using Ubuntu EC2
+        IMAGE_TAG = "latest"
+        CONTAINER_NAME = "flask"
+        EC2_HOST = "ec2-user@13.60.31.154" // Change to 'ubuntu@' if Ubuntu AMI
+        EC2_APP_DIR = "/home/ec2-user/app" // Directory on EC2 where app will be copied
     }
 
     stages {
-        stage('Clone Repository') {
+        stage('Checkout Code') {
             steps {
                 checkout scm
             }
         }
 
-        stage('Build Docker Image') {
-            steps {
-                bat "docker build -t %IMAGE_NAME%:%IMAGE_TAG% ."
-            }
-        }
-
-        stage('Push to DockerHub') {
-            steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhubs-creds-1',
-                    usernameVariable: 'DOCKER_USERNAME',
-                    passwordVariable: 'DOCKER_PASSWORD'
-                )]) {
-                    bat """
-                        echo %DOCKER_PASSWORD% | docker login -u %DOCKER_USERNAME% --password-stdin
-                        docker tag %IMAGE_NAME%:%IMAGE_TAG% %DOCKER_HUB_REPO%:%IMAGE_TAG%
-                        docker push %DOCKER_HUB_REPO%:%IMAGE_TAG%
-                        docker logout
-                    """
-                }
-            }
-        }
-
-        stage('Deploy to EC2') {
+        stage('Transfer Files to EC2') {
             steps {
                 withCredentials([sshUserPrivateKey(
                     credentialsId: 'docker-jenkins-app',
@@ -149,20 +127,37 @@ pipeline {
                     usernameVariable: 'SSH_USER'
                 )]) {
                     script {
-                        // Set key permissions (Windows hack)
+                        // Set PEM permissions (Windows-specific)
                         bat """
                             icacls "%SSH_KEY%" /inheritance:r
                             icacls "%SSH_KEY%" /grant:r "%USERNAME%":(R)
                             icacls "%SSH_KEY%" /grant:r "SYSTEM":(R)
                         """
 
-                        // Deploy via SSH
+                        // Copy app files to EC2 using SCP
+                        bat """
+                            powershell -Command "scp -i %SSH_KEY% -o StrictHostKeyChecking=no -r * %SSH_USER%@${EC2_HOST}:${EC2_APP_DIR}"
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Build & Deploy on EC2') {
+            steps {
+                withCredentials([sshUserPrivateKey(
+                    credentialsId: 'docker-jenkins-app',
+                    keyFileVariable: 'SSH_KEY',
+                    usernameVariable: 'SSH_USER'
+                )]) {
+                    script {
                         bat """
                             ssh -i "%SSH_KEY%" -o StrictHostKeyChecking=no %EC2_HOST% ^
-                                "docker pull %DOCKER_HUB_REPO%:%IMAGE_TAG% ^
-                                && (docker stop flask || echo 'Not running') ^
-                                && (docker rm flask || echo 'Not running') ^
-                                && docker run -d --name flask -p 5000:5000 %DOCKER_HUB_REPO%:%IMAGE_TAG%"
+                            "cd ${EC2_APP_DIR} ^
+                            && docker stop ${CONTAINER_NAME} || true ^
+                            && docker rm ${CONTAINER_NAME} || true ^
+                            && docker build -t ${IMAGE_NAME}:${IMAGE_TAG} . ^
+                            && docker run -d --name ${CONTAINER_NAME} -p 5000:5000 ${IMAGE_NAME}:${IMAGE_TAG}"
                         """
                     }
                 }
