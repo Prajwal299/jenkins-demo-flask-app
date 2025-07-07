@@ -3,7 +3,7 @@ pipeline {
   stages {
     stage('Clone Repo') {
       steps {
-        git 'https://github.com/Prajwal299/jenkins-demo-flask-app.git'
+        branch: 'main', url: 'https://github.com/Prajwal299/jenkins-demo-flask-app.git'
       }
     }
     stage('Build Docker Image') {
@@ -15,7 +15,7 @@ pipeline {
     }
     stage('Push to DockerHub') {
       steps {
-        withCredentials([usernamePassword(credentialsId: 'dockerhubs-creds', usernameVariable: 'prajwal', passwordVariable: 'Rawate')]) {
+        withCredentials([usernamePassword(credentialsId: 'dockerhubs-creds', usernameVariable: 'USER', passwordVariable: "PASS")]) {
           sh """
             echo $PASS | docker login -u $USER --password-stdin
             docker tag jenkins-flask-app:demo1 $USER/jenkins-flask-app:demo1
