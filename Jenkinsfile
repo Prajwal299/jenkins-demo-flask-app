@@ -99,19 +99,15 @@
 //   }
 // }
 
-
-
 pipeline {
     agent any
 
     environment {
-    IMAGE_NAME = "jenkins-flask-app"
-    IMAGE_TAG = "latest"
-    CONTAINER_NAME = "flask"
-    EC2_HOST = "ubuntu@13.60.31.154"      // ✅ Use 'ubuntu' not 'ec2-user'
-    EC2_APP_DIR = "/home/ubuntu/app"      // ✅ Match home directory for Ubuntu user
-     }
-
+        EC2_HOST = "ubuntu@13.60.31.154"
+        EC2_APP_DIR = "/home/ubuntu/app"
+        IMAGE_NAME = "jenkins-flask-app"
+        CONTAINER_NAME = "flask"
+    }
 
     stages {
         stage('Checkout Code') {
@@ -123,21 +119,21 @@ pipeline {
         stage('Transfer Files to EC2') {
             steps {
                 withCredentials([sshUserPrivateKey(
-                    credentialsId: 'docker-jenkins-app',
+                    credentialsId: 'docker-jenkins-app', // SSH key stored in Jenkins
                     keyFileVariable: 'SSH_KEY',
                     usernameVariable: 'SSH_USER'
                 )]) {
                     script {
-                        // Set PEM permissions (Windows-specific)
+                        // Fix Windows key permissions
                         bat """
                             icacls "%SSH_KEY%" /inheritance:r
                             icacls "%SSH_KEY%" /grant:r "%USERNAME%":(R)
                             icacls "%SSH_KEY%" /grant:r "SYSTEM":(R)
                         """
 
-                        // Copy app files to EC2 using SCP
+                        // Transfer code to EC2 instance
                         bat """
-                            powershell -Command "scp -i %SSH_KEY% -o StrictHostKeyChecking=no -r * %SSH_USER%@${EC2_HOST}:${EC2_APP_DIR}"
+                            powershell -Command "scp -i %SSH_KEY% -o StrictHostKeyChecking=no -r * %EC2_HOST%:%EC2_APP_DIR%"
                         """
                     }
                 }
@@ -153,12 +149,12 @@ pipeline {
                 )]) {
                     script {
                         bat """
-                            ssh -i "%SSH_KEY%" -o StrictHostKeyChecking=no %EC2_HOST% ^
-                            "cd ${EC2_APP_DIR} ^
-                            && docker stop ${CONTAINER_NAME} || true ^
-                            && docker rm ${CONTAINER_NAME} || true ^
-                            && docker build -t ${IMAGE_NAME}:${IMAGE_TAG} . ^
-                            && docker run -d --name ${CONTAINER_NAME} -p 5000:5000 ${IMAGE_NAME}:${IMAGE_TAG}"
+                            ssh -i %SSH_KEY% -o StrictHostKeyChecking=no %EC2_HOST% ^
+                                "cd %EC2_APP_DIR% && ^
+                                 docker build -t %IMAGE_NAME% . && ^
+                                 (docker stop %CONTAINER_NAME% || echo 'Not running') && ^
+                                 (docker rm %CONTAINER_NAME% || echo 'Not present') && ^
+                                 docker run -d --name %CONTAINER_NAME% -p 5000:5000 %IMAGE_NAME%"
                         """
                     }
                 }
@@ -172,10 +168,10 @@ pipeline {
             cleanWs()
         }
         success {
-            echo '✅ Pipeline executed successfully.'
+            echo '✅ Deployment successful.'
         }
         failure {
-            echo '❌ Pipeline failed.'
+            echo '❌ Deployment failed.'
         }
     }
 }
