@@ -108,7 +108,7 @@ pipeline {
         IMAGE_NAME = "jenkins-flask-app"
         IMAGE_TAG = "demo1"
         DOCKER_HUB_REPO = "prajwalrawate1/jenkins-flask-app"
-        EC2_INSTANCE = "ec2-user@13.60.31.154"
+        EC2_HOST = "ec2-user@13.60.31.154" // or ubuntu@ if using Ubuntu EC2
     }
 
     stages {
@@ -120,30 +120,23 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                bat 'docker build -t %IMAGE_NAME%:%IMAGE_TAG% .'
+                bat "docker build -t %IMAGE_NAME%:%IMAGE_TAG% ."
             }
         }
 
-        stage('Push to Docker Hub') {
+        stage('Push to DockerHub') {
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'dockerhubs-creds-1',
-                    passwordVariable: 'DOCKER_PASSWORD',
-                    usernameVariable: 'DOCKER_USERNAME'
+                    usernameVariable: 'DOCKER_USERNAME',
+                    passwordVariable: 'DOCKER_PASSWORD'
                 )]) {
-                    script {
-                        try {
-                            bat """
-                                echo %DOCKER_PASSWORD% | docker login -u %DOCKER_USERNAME% --password-stdin
-                                docker tag %IMAGE_NAME%:%IMAGE_TAG% %DOCKER_HUB_REPO%:%IMAGE_TAG%
-                                docker push %DOCKER_HUB_REPO%:%IMAGE_TAG%
-                                docker logout
-                            """
-                        } catch (Exception e) {
-                            bat "docker logout"
-                            error("Failed to push image: ${e.getMessage()}")
-                        }
-                    }
+                    bat """
+                        echo %DOCKER_PASSWORD% | docker login -u %DOCKER_USERNAME% --password-stdin
+                        docker tag %IMAGE_NAME%:%IMAGE_TAG% %DOCKER_HUB_REPO%:%IMAGE_TAG%
+                        docker push %DOCKER_HUB_REPO%:%IMAGE_TAG%
+                        docker logout
+                    """
                 }
             }
         }
@@ -153,22 +146,22 @@ pipeline {
                 withCredentials([sshUserPrivateKey(
                     credentialsId: 'docker-jenkins-app',
                     keyFileVariable: 'SSH_KEY',
-                    usernameVariable: 'SSH_USERNAME'
+                    usernameVariable: 'SSH_USER'
                 )]) {
                     script {
-                        // Fix SSH key permissions (Windows specific)
+                        // Set key permissions (Windows hack)
                         bat """
                             icacls "%SSH_KEY%" /inheritance:r
                             icacls "%SSH_KEY%" /grant:r "%USERNAME%":(R)
                             icacls "%SSH_KEY%" /grant:r "SYSTEM":(R)
                         """
-                        
-                        // Execute remote commands
+
+                        // Deploy via SSH
                         bat """
-                            ssh -i "%SSH_KEY%" -o StrictHostKeyChecking=no %EC2_INSTANCE% ^
+                            ssh -i "%SSH_KEY%" -o StrictHostKeyChecking=no %EC2_HOST% ^
                                 "docker pull %DOCKER_HUB_REPO%:%IMAGE_TAG% ^
-                                && (docker stop flask || echo 'Container stop failed') ^
-                                && (docker rm flask || echo 'Container remove failed') ^
+                                && (docker stop flask || echo 'Not running') ^
+                                && (docker rm flask || echo 'Not running') ^
                                 && docker run -d --name flask -p 5000:5000 %DOCKER_HUB_REPO%:%IMAGE_TAG%"
                         """
                     }
@@ -179,14 +172,14 @@ pipeline {
 
     post {
         always {
-            echo 'Pipeline execution completed'
+            echo 'Cleaning workspace...'
             cleanWs()
         }
         success {
-            echo 'Pipeline succeeded!'
+            echo '✅ Pipeline executed successfully.'
         }
         failure {
-            echo 'Pipeline failed'
+            echo '❌ Pipeline failed.'
         }
     }
 }
