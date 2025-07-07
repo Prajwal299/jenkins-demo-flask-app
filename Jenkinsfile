@@ -2,9 +2,11 @@ pipeline {
   agent any
   stages {
     stage('Clone Repo') {
-      script {
+      steps {
+        script {
       git branch: 'main', url: 'https://github.com/Prajwal299/jenkins-demo-flask-app.git'
     }
+      }
     }
     stage('Build Docker Image') {
       steps {
