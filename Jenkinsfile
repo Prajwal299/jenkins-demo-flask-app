@@ -108,6 +108,7 @@ pipeline {
         IMAGE_NAME = "jenkins-flask-app"
         IMAGE_TAG = "demo1"
         DOCKER_HUB_REPO = "prajwalrawate1/jenkins-flask-app"
+        EC2_INSTANCE = "ec2-user@13.60.31.154"
     }
 
     stages {
@@ -132,17 +133,6 @@ pipeline {
                 )]) {
                     script {
                         try {
-                            // Check if repository exists first
-                            def repoExists = bat(
-                                script: '@curl -s -f -I "https://hub.docker.com/v2/repositories/%DOCKER_HUB_REPO%/"',
-                                returnStatus: true
-                            ) == 0
-                            
-                            if (!repoExists) {
-                                error("Docker Hub repository %DOCKER_HUB_REPO% does not exist")
-                            }
-
-                            // Login and push
                             bat """
                                 echo %DOCKER_PASSWORD% | docker login -u %DOCKER_USERNAME% --password-stdin
                                 docker tag %IMAGE_NAME%:%IMAGE_TAG% %DOCKER_HUB_REPO%:%IMAGE_TAG%
@@ -166,13 +156,20 @@ pipeline {
                     usernameVariable: 'SSH_USERNAME'
                 )]) {
                     script {
+                        // Fix SSH key permissions (Windows specific)
                         bat """
-                            ssh -i "%SSH_KEY%" -o StrictHostKeyChecking=no ec2-user@13.60.31.154 "
-                                docker pull %DOCKER_HUB_REPO%:%IMAGE_TAG%
-                                docker stop flask || true
-                                docker rm flask || true
-                                docker run -d --name flask -p 5000:5000 %DOCKER_HUB_REPO%:%IMAGE_TAG%
-                            "
+                            icacls "%SSH_KEY%" /inheritance:r
+                            icacls "%SSH_KEY%" /grant:r "%USERNAME%":(R)
+                            icacls "%SSH_KEY%" /grant:r "SYSTEM":(R)
+                        """
+                        
+                        // Execute remote commands
+                        bat """
+                            ssh -i "%SSH_KEY%" -o StrictHostKeyChecking=no %EC2_INSTANCE% ^
+                                "docker pull %DOCKER_HUB_REPO%:%IMAGE_TAG% ^
+                                && (docker stop flask || echo 'Container stop failed') ^
+                                && (docker rm flask || echo 'Container remove failed') ^
+                                && docker run -d --name flask -p 5000:5000 %DOCKER_HUB_REPO%:%IMAGE_TAG%"
                         """
                     }
                 }
@@ -184,6 +181,9 @@ pipeline {
         always {
             echo 'Pipeline execution completed'
             cleanWs()
+        }
+        success {
+            echo 'Pipeline succeeded!'
         }
         failure {
             echo 'Pipeline failed'
