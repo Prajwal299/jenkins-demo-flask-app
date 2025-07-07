@@ -2,68 +2,61 @@ pipeline {
     agent any
 
     environment {
-        EC2_USER = 'ubuntu'
-        EC2_HOST = '13.60.31.154'
-        EC2_APP_DIR = '/home/ubuntu/app'
+        PEM_PATH = "/c/Users/PRAJWAL RAWATE/.ssh/docker-jenkins-app.pem"
+        EC2_HOST = "ubuntu@ec2-13-60-31-154.eu-north-1.compute.amazonaws.com"
+        REMOTE_DIR = "/home/ubuntu/flask-app"
+        BASH = "\"C:\\Program Files\\Git\\bin\\bash.exe\" -c"
     }
 
     stages {
-        stage('Checkout Code') {
+        stage('Checkout') {
             steps {
-                git credentialsId: 'docker-jenkins-app', url: 'https://github.com/Prajwal299/jenkins-demo-flask-app.git', branch: 'main'
+                git branch: 'main', url: 'https://github.com/your-username/your-flask-repo.git'
             }
         }
 
-        stage('Transfer Files to EC2') {
+        stage('Build Docker Image') {
             steps {
-                withCredentials([sshUserPrivateKey(
-                    credentialsId: 'docker-jenkins-app',
-                    keyFileVariable: 'SSH_KEY',
-                    usernameVariable: 'SSH_USER'
-                )]) {
-                    // Fix key permissions on Windows
-                    bat """
-                        powershell -Command "
-                            \$acl = Get-Acl '%SSH_KEY%';
-                            \$acl.SetAccessRuleProtection(\$true, \$false);
-                            \$acl.Access | Where-Object { \$_.IdentityReference -ne 'NT AUTHORITY\\\\SYSTEM' -and \$_.IdentityReference -ne \$env:USERNAME } | ForEach-Object { \$acl.RemoveAccessRule(\$_) };
-                            Set-Acl '%SSH_KEY%' \$acl
-                        "
-                    """
-
-                    // Transfer files to EC2
-                    bat """
-                        powershell -Command "scp -i %SSH_KEY% -o StrictHostKeyChecking=no -r * ${EC2_USER}@${EC2_HOST}:${EC2_APP_DIR}"
-                    """
-                }
+                bat 'docker build -t flask-app .'
             }
         }
 
-        stage('Build & Run Docker on EC2') {
+        stage('Save Docker Image') {
             steps {
-                withCredentials([sshUserPrivateKey(
-                    credentialsId: 'docker-jenkins-app',
-                    keyFileVariable: 'SSH_KEY',
-                    usernameVariable: 'SSH_USER'
-                )]) {
-                    bat """
-                        powershell -Command "ssh -i %SSH_KEY% -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} \\
-                        'cd ${EC2_APP_DIR} && docker build -t flask-app . && docker stop flask-app || true && docker rm flask-app || true && docker run -d -p 5000:5000 --name flask-app flask-app'"
-                    """
-                }
+                bat 'docker save flask-app -o flask-app.tar'
+            }
+        }
+
+        stage('Copy Image to EC2') {
+            steps {
+                bat """
+                ${BASH} 'scp -o StrictHostKeyChecking=no -i "${PEM_PATH}" flask-app.tar ${EC2_HOST}:${REMOTE_DIR}/'
+                """
+            }
+        }
+
+        stage('Run App on EC2') {
+            steps {
+                bat """
+                ${BASH} 'ssh -o StrictHostKeyChecking=no -i "${PEM_PATH}" ${EC2_HOST} << EOF
+                mkdir -p ${REMOTE_DIR}
+                cd ${REMOTE_DIR}
+                docker load < flask-app.tar
+                docker stop flask-app || true
+                docker rm flask-app || true
+                docker run -d --name flask-app -p 5000:5000 flask-app
+                EOF'
+                """
             }
         }
     }
 
     post {
-        failure {
-            echo '❌ Deployment failed.'
-        }
         success {
-            echo '✅ Deployment succeeded!'
+            echo '✅ App Deployed to EC2 Successfully!'
         }
-        always {
-            cleanWs()
+        failure {
+            echo '❌ Deployment Failed. Check Logs.'
         }
     }
 }
