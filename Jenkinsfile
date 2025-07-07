@@ -108,27 +108,18 @@ pipeline {
         IMAGE_NAME = "jenkins-flask-app"
         IMAGE_TAG = "demo1"
         DOCKER_HUB_REPO = "prajwalrawate1/jenkins-flask-app"
-        EC2_INSTANCE = "ec2-user@13.60.31.154"
     }
 
     stages {
         stage('Clone Repository') {
             steps {
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: 'main']],
-                    userRemoteConfigs: [[
-                        url: 'https://github.com/Prajwal299/jenkins-demo-flask-app.git'
-                    ]]
-                ])
+                checkout scm
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                script {
-                    docker.build("${IMAGE_NAME}:${IMAGE_TAG}")
-                }
+                bat 'docker build -t %IMAGE_NAME%:%IMAGE_TAG% .'
             }
         }
 
@@ -136,24 +127,30 @@ pipeline {
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'dockerhubs-creds-1',
-                    usernameVariable: 'DOCKER_USERNAME',
-                    passwordVariable: 'DOCKER_PASSWORD'
+                    passwordVariable: 'DOCKER_PASSWORD',
+                    usernameVariable: 'DOCKER_USERNAME'
                 )]) {
                     script {
                         try {
-                            // First verify the repository exists
-                            sh """
-                                if ! curl -s -f -I "https://hub.docker.com/v2/repositories/${DOCKER_HUB_REPO}/"; then
-                                    echo "ERROR: Repository ${DOCKER_HUB_REPO} doesn't exist on Docker Hub"
-                                    exit 1
-                                fi
-                                
-                                echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USERNAME --password-stdin
-                                docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${DOCKER_HUB_REPO}:${IMAGE_TAG}
-                                docker push ${DOCKER_HUB_REPO}:${IMAGE_TAG}
+                            // Check if repository exists first
+                            def repoExists = bat(
+                                script: '@curl -s -f -I "https://hub.docker.com/v2/repositories/%DOCKER_HUB_REPO%/"',
+                                returnStatus: true
+                            ) == 0
+                            
+                            if (!repoExists) {
+                                error("Docker Hub repository %DOCKER_HUB_REPO% does not exist")
+                            }
+
+                            // Login and push
+                            bat """
+                                echo %DOCKER_PASSWORD% | docker login -u %DOCKER_USERNAME% --password-stdin
+                                docker tag %IMAGE_NAME%:%IMAGE_TAG% %DOCKER_HUB_REPO%:%IMAGE_TAG%
+                                docker push %DOCKER_HUB_REPO%:%IMAGE_TAG%
                                 docker logout
                             """
                         } catch (Exception e) {
+                            bat "docker logout"
                             error("Failed to push image: ${e.getMessage()}")
                         }
                     }
@@ -169,18 +166,14 @@ pipeline {
                     usernameVariable: 'SSH_USERNAME'
                 )]) {
                     script {
-                        try {
-                            sh """
-                                ssh -i $SSH_KEY -o StrictHostKeyChecking=no ${EC2_INSTANCE} \"
-                                    docker pull ${DOCKER_HUB_REPO}:${IMAGE_TAG} || true
-                                    docker stop flask || true
-                                    docker rm flask || true
-                                    docker run -d --name flask -p 5000:5000 ${DOCKER_HUB_REPO}:${IMAGE_TAG}
-                                \"
-                            """
-                        } catch (Exception e) {
-                            error("Deployment failed: ${e.getMessage()}")
-                        }
+                        bat """
+                            ssh -i "%SSH_KEY%" -o StrictHostKeyChecking=no ec2-user@13.60.31.154 "
+                                docker pull %DOCKER_HUB_REPO%:%IMAGE_TAG%
+                                docker stop flask || true
+                                docker rm flask || true
+                                docker run -d --name flask -p 5000:5000 %DOCKER_HUB_REPO%:%IMAGE_TAG%
+                            "
+                        """
                     }
                 }
             }
@@ -189,14 +182,11 @@ pipeline {
 
     post {
         always {
-            echo "Pipeline execution completed"
+            echo 'Pipeline execution completed'
             cleanWs()
         }
-        success {
-            echo "Pipeline succeeded!"
-        }
         failure {
-            echo "Pipeline failed"
+            echo 'Pipeline failed'
         }
     }
 }
