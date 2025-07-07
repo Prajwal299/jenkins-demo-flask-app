@@ -105,12 +105,13 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = "jenkins-flask-app"
-        IMAGE_TAG = "latest"
-        CONTAINER_NAME = "flask"
-        EC2_HOST = "ec2-user@13.60.31.154" // Change to 'ubuntu@' if Ubuntu AMI
-        EC2_APP_DIR = "/home/ec2-user/app" // Directory on EC2 where app will be copied
-    }
+    IMAGE_NAME = "jenkins-flask-app"
+    IMAGE_TAG = "latest"
+    CONTAINER_NAME = "flask"
+    EC2_HOST = "ubuntu@13.60.31.154"      // ✅ Use 'ubuntu' not 'ec2-user'
+    EC2_APP_DIR = "/home/ubuntu/app"      // ✅ Match home directory for Ubuntu user
+     }
+
 
     stages {
         stage('Checkout Code') {
