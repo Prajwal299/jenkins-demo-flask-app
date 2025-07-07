@@ -45,14 +45,13 @@
 
 
 
-
 pipeline {
   agent any
 
   environment {
     IMAGE_NAME = "jenkins-flask-app"
     IMAGE_TAG = "demo1"
-    FULL_IMAGE = "prajwalrawate1/demo-app-flask:demo1"
+    FULL_IMAGE = "prajwalrawate1/${IMAGE_NAME}:${IMAGE_TAG}"
   }
 
   stages {
@@ -67,22 +66,18 @@ pipeline {
 
     stage('Build Docker Image') {
       steps {
-        script {
-          sh "docker build -t demo-app-flask:demo1 ."
-        }
+        sh 'docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .'
       }
     }
 
     stage('Push to DockerHub') {
       steps {
-        withCredentials([usernamePassword(credentialsId: 'dockerhubs-creds', usernameVariable: prajwalrawate1, passwordVariable: Rawate@123455)]) {
-          script {
-            sh """
-              echo Rawate@123455 | docker login -u prajwalrawate1 --password-stdin
-              docker tag demo-app-flask:demo1 prajwalrawate1/jenkins-flask-app:demo1
-              docker push prajwalrawate1/jenkins-flask-app:demo1
-            """
-          }
+        withCredentials([usernamePassword(credentialsId: 'dockerhubs-creds-1', usernameVariable: 'DOCKER_HUB_USERNAME', passwordVariable: 'DOCKER_HUB_PASSWORD')]) {
+          sh '''
+            echo $DOCKER_HUB_PASSWORD | docker login -u $DOCKER_HUB_USERNAME --password-stdin
+            docker tag ${IMAGE_NAME}:${IMAGE_TAG} $DOCKER_HUB_USERNAME/${IMAGE_NAME}:${IMAGE_TAG}
+            docker push $DOCKER_HUB_USERNAME/${IMAGE_NAME}:${IMAGE_TAG}
+          '''
         }
       }
     }
