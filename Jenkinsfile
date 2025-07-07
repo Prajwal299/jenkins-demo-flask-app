@@ -114,28 +114,20 @@ pipeline {
     stages {
         stage('Clone Repository') {
             steps {
-                script {
-                    checkout([
-                        $class: 'GitSCM',
-                        branches: [[name: 'main']],
-                        userRemoteConfigs: [[
-                            url: 'https://github.com/Prajwal299/jenkins-demo-flask-app.git'
-                        ]]
-                    ])
-                    echo "Repository cloned successfully"
-                }
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: 'main']],
+                    userRemoteConfigs: [[
+                        url: 'https://github.com/Prajwal299/jenkins-demo-flask-app.git'
+                    ]]
+                ])
             }
         }
 
         stage('Build Docker Image') {
             steps {
                 script {
-                    try {
-                        bat "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
-                        echo "Docker image built successfully"
-                    } catch (Exception e) {
-                        error("Docker build failed: ${e.getMessage()}")
-                    }
+                    docker.build("${IMAGE_NAME}:${IMAGE_TAG}")
                 }
             }
         }
@@ -149,16 +141,20 @@ pipeline {
                 )]) {
                     script {
                         try {
-                            bat """
-                                echo %DOCKER_PASSWORD% | docker login -u %DOCKER_USERNAME% --password-stdin
+                            // First verify the repository exists
+                            sh """
+                                if ! curl -s -f -I "https://hub.docker.com/v2/repositories/${DOCKER_HUB_REPO}/"; then
+                                    echo "ERROR: Repository ${DOCKER_HUB_REPO} doesn't exist on Docker Hub"
+                                    exit 1
+                                fi
+                                
+                                echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USERNAME --password-stdin
                                 docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${DOCKER_HUB_REPO}:${IMAGE_TAG}
                                 docker push ${DOCKER_HUB_REPO}:${IMAGE_TAG}
                                 docker logout
                             """
-                            echo "Image pushed to Docker Hub successfully"
                         } catch (Exception e) {
-                            bat "docker logout"
-                            error("Failed to push image to Docker Hub: ${e.getMessage()}")
+                            error("Failed to push image: ${e.getMessage()}")
                         }
                     }
                 }
@@ -167,18 +163,21 @@ pipeline {
 
         stage('Deploy to EC2') {
             steps {
-                sshagent(['docker-jenkins-app']) {
+                withCredentials([sshUserPrivateKey(
+                    credentialsId: 'docker-jenkins-app',
+                    keyFileVariable: 'SSH_KEY',
+                    usernameVariable: 'SSH_USERNAME'
+                )]) {
                     script {
                         try {
-                            bat """
-                                ssh -o StrictHostKeyChecking=no ${EC2_INSTANCE} "
-                                    docker pull ${DOCKER_HUB_REPO}:${IMAGE_TAG} && 
-                                    (docker stop flask || true) && 
-                                    (docker rm flask || true) && 
+                            sh """
+                                ssh -i $SSH_KEY -o StrictHostKeyChecking=no ${EC2_INSTANCE} \"
+                                    docker pull ${DOCKER_HUB_REPO}:${IMAGE_TAG} || true
+                                    docker stop flask || true
+                                    docker rm flask || true
                                     docker run -d --name flask -p 5000:5000 ${DOCKER_HUB_REPO}:${IMAGE_TAG}
-                                "
+                                \"
                             """
-                            echo "Application deployed successfully to EC2"
                         } catch (Exception e) {
                             error("Deployment failed: ${e.getMessage()}")
                         }
