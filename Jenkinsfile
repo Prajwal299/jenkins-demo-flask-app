@@ -1,100 +1,80 @@
+// Jenkinsfile - No Docker Hub / Registryless approach
+
 pipeline {
     agent any
 
     environment {
-        EC2_HOST = "ubuntu@ec2-13-60-31-154.eu-north-1.compute.amazonaws.com"
-        REMOTE_DIR = "/home/ubuntu/flask-app"
+        // IP of the server where the application will be deployed
+        DEPLOY_SERVER_IP = "ec2-13-60-31-154.eu-north-1.compute.amazonaws.com"
+        
+        // A simple name for the Docker image we will build locally on the deployment server
+        IMAGE_NAME = "local-flask-app"
+        
+        // Name for the running container
+        CONTAINER_NAME = "flask-app-container"
+        
+        // Your project's repository URL
+        REPO_URL = "https://github.com/Prajwal299/jenkins-demo-flask-app.git"
     }
 
     stages {
-        stage('Checkout') {
+        stage('Deploy to EC2') {
             steps {
-                git branch: 'main', 
-                    credentialsId: 'github-pat', 
-                    url: 'https://github.com/Prajwal299/jenkins-demo-flask-app.git'
-            }
-        }
+                echo "Deploying to EC2 instance: ${DEPLOY_SERVER_IP}"
+                // Use the SSH Agent plugin with the credential ID for your EC2 private key
+                sshagent(credentials: ['ec2-ssh-key']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ubuntu@${DEPLOY_SERVER_IP} '
+                            
+                            # Define a workspace directory on the deployment server
+                            APP_DIR="/home/ubuntu/jenkins-demo-flask-app"
 
-        stage('Build Docker Image') {
-            steps {
-                script {
-                    if (isUnix()) {
-                        sh 'docker build -t flask-app .'
-                    } else {
-                        bat 'docker build -t flask-app .'
-                    }
-                }
-            }
-        }
+                            echo "--- Connected to deployment server. Preparing workspace... ---"
 
-        stage('Save Docker Image') {
-            steps {
-                script {
-                    if (isUnix()) {
-                        sh 'docker save flask-app -o flask-app.tar'
-                    } else {
-                        bat 'docker save flask-app -o flask-app.tar'
-                    }
-                }
-            }
-        }
+                            # Clone the repo if it doesn't exist, or pull the latest changes if it does
+                            if [ ! -d "\$APP_DIR" ]; then
+                                echo "Cloning repository..."
+                                git clone ${REPO_URL} \$APP_DIR
+                            else
+                                echo "Repository exists. Pulling latest changes..."
+                                cd \$APP_DIR
+                                git pull
+                            fi
 
-        stage('Copy Image to EC2') {
-            steps {
-                withCredentials([sshUserPrivateKey(credentialsId: 'ec2-ssh-key', keyFileVariable: 'PEM_PATH')]) {
-                    script {
-                        if (isUnix()) {
-                            sh """
-                            scp -o StrictHostKeyChecking=no -i "${PEM_PATH}" flask-app.tar ${EC2_HOST}:${REMOTE_DIR}/
-                            """
-                        } else {
-                            bat """
-                            scp -o StrictHostKeyChecking=no -i "${PEM_PATH}" flask-app.tar ${EC2_HOST}:${REMOTE_DIR}/
-                            """
-                        }
-                    }
-                }
-            }
-        }
+                            # Navigate into the application directory
+                            cd \$APP_DIR
 
-        stage('Run App on EC2') {
-            steps {
-                withCredentials([sshUserPrivateKey(credentialsId: 'ec2-ssh-key', keyFileVariable: 'PEM_PATH')]) {
-                    script {
-                        if (isUnix()) {
-                            sh """
-                            ssh -o StrictHostKeyChecking=no -i "${PEM_PATH}" ${EC2_HOST} << EOF
-                            mkdir -p ${REMOTE_DIR}
-                            cd ${REMOTE_DIR}
-                            docker load < flask-app.tar
-                            docker stop flask-app || true
-                            docker rm flask-app || true
-                            docker run -d --name flask-app -p 5000:5000 flask-app
-                            EOF
-                            """
-                        } else {
-                            bat """
-                            ssh -o StrictHostKeyChecking=no -i "${PEM_PATH}" ${EC2_HOST} ^
-                            "mkdir -p ${REMOTE_DIR} && ^
-                            cd ${REMOTE_DIR} && ^
-                            docker load < flask-app.tar && ^
-                            docker stop flask-app || true && ^
-                            docker rm flask-app || true && ^
-                            docker run -d --name flask-app -p 5000:5000 flask-app"
-                            """
-                        }
-                    }
+                            echo "--- Building Docker image locally on deployment server... ---"
+                            # Build the image using the local Dockerfile
+                            # We tag it with the Jenkins build number for history and 'latest' for convenience
+                            docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} -t ${IMAGE_NAME}:latest .
+
+                            echo "--- Stopping and removing old container... ---"
+                            # Stop the running container if it exists (|| true prevents script failure)
+                            docker stop ${CONTAINER_NAME} || true
+
+                            # Remove the old container if it exists
+                            docker rm ${CONTAINER_NAME} || true
+
+                            echo "--- Starting new container... ---"
+                            # Run the new container from the 'latest' image
+                            # We map port 80 on the host to port 5000 in the container
+                            docker run -d --name ${CONTAINER_NAME} -p 80:5000 ${IMAGE_NAME}:latest
+                            
+                            echo "--- Deployment successful! ---"
+
+                            # Optional: Clean up old, untagged images to save space
+                            docker image prune -f
+                        '
+                    """
                 }
             }
         }
     }
-
+    
     post {
-        success {
-            echo '✅ App Deployed to EC2 Successfully!'
-        }
-        failure {
-            echo '❌ Deployment Failed. Check Logs.'
+        always {
+            echo 'Pipeline finished.'
         }
     }
 }
